@@ -1,9 +1,11 @@
+import streamlit as st
 import FinanceDataReader as fdr
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
 import re
 
+@st.cache_data(ttl=3600)
 def get_exchange_rate():
     try:
         df = fdr.DataReader('USD/KRW', datetime.now() - timedelta(days=7))
@@ -18,6 +20,7 @@ def format_price(val, market="KR", code=None):
         else: return f"{int(val):,}원"
     except: return str(val)
 
+@st.cache_data(ttl=3600)
 def fetch_data(code):
     try:
         # 데이터 기간을 충분히 확보 (백테스팅용)
@@ -479,4 +482,5 @@ def get_all_strategies_status(df):
     return {
         "🐢 터틀": s_turtle, "⚡ 엘리트": s_elite, "🔥 DBB": s_dbb, "💧 BNF": s_bnf,
         "🤖 AI스퀴즈": s_sqz, "🛡️ 버핏": s_buff, "⚓ VWAP": s_vwap
+
     }
