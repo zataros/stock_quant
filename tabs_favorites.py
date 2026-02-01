@@ -283,7 +283,7 @@ def run():
             key="fav_editor_kr"
         )
         
-        if st.button("💾 국내주식 변경사항 저장", key="btn_save_kr"):
+        if st.button("삭제", key="save_kr", type="primary"):  # type="primary"가 붉은색 효과를 줍니다
             if process_db_updates(user, edited_kr, df_kr):
                 st.rerun()
 
@@ -327,6 +327,7 @@ def run():
             key="fav_editor_us"
         )
 
-        if st.button("💾 해외주식 변경사항 저장", key="btn_save_us"):
+        if st.button("삭제", key="save_us", type="primary"):
             if process_db_updates(user, edited_us, df_us):
+
                 st.rerun()
