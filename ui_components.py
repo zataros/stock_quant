@@ -7,8 +7,11 @@ from plotly.subplots import make_subplots
 def render_consensus_html(consensus):
     """HTML 카드 UI"""
     style = """<style>.cons-container {display:flex;flex-wrap:wrap;gap:8px;justify-content:center;background-color:#1e1e1e;padding:15px;border-radius:10px;border:1px solid #333;margin-bottom:20px;}.cons-card {background-color:#2b2b2b;border-radius:8px;width:13%;min-width:90px;text-align:center;padding:10px 5px;box-shadow:0 2px 4px rgba(0,0,0,0.3);transition:transform 0.2s;}.cons-card:hover {transform:translateY(-3px);border:1px solid #555;}.cons-emoji {font-size:24px;margin-bottom:5px;}.cons-title {font-size:11px;color:#aaa;margin-bottom:5px;font-weight:bold;white-space:nowrap;}.cons-val {font-size:13px;font-weight:bold;color:#fff;}.val-buy {color:#39ff14;text-shadow:0 0 8px rgba(57,255,20,0.5);}.val-hold {color:#ffeb3b;}.val-sell {color:#ff4b4b;}.val-wait {color:#777;}@media (max-width: 768px) {.cons-card {width:30%;margin-bottom:5px;}}</style>"""
-    emoji_map = { "🐢 터틀": "🐢", "⚡ 엘리트": "⚡", "🔥 DBB": "🔥", "💧 BNF": "🍱", "🤖 AI스퀴즈": "🤖", "🛡️ 버핏": "👴", "⚓ VWAP": "⚓" }
-    order = ["🐢 터틀", "⚡ 엘리트", "🔥 DBB", "💧 BNF", "🤖 AI스퀴즈", "🛡️ 버핏", "⚓ VWAP"]
+    
+    # [수정] 이모지 맵 업데이트 (TH알고리즘으로 변경)
+    emoji_map = { "🐢 터틀": "🐢", "⚡ 엘리트": "⚡", "🔥 DBB": "🔥", "💧 BNF": "🍱", "🤖 AI스퀴즈": "🤖", "🧬 TH알고리즘": "🧬", "⚓ VWAP": "⚓" }
+    order = ["🐢 터틀", "⚡ 엘리트", "🔥 DBB", "💧 BNF", "🤖 AI스퀴즈", "🧬 TH알고리즘", "⚓ VWAP"]
+    
     cards = []
     for key in order:
         val = consensus.get(key, "WAIT")
@@ -110,14 +113,31 @@ def draw_strategy_chart(df, code, strategy_name):
         fig.add_trace(go.Bar(x=dates, y=df['Volume'], marker_color=colors, name='Volume'), row=2, col=1)
         fig.add_trace(go.Scatter(x=dates, y=df['Bandwidth'], line=dict(color='white', width=1.5), name='Bandwidth'), row=3, col=1)
         fig.update_xaxes(range=[start_date, end_date + pd.DateOffset(days=5)], row=3, col=1)
-    elif "버핏" in strategy_name:
-        last_rsi = df['RSI'].iloc[-1]
-        titles = (f"{strategy_name} ({code}) <span style='{style_g}'>Price: {int(last_price):,}</span>", f"RSI <span style='{style_g}'>{last_rsi:.1f}</span>")
+    
+    # [수정] TH알고리즘 차트 그리기
+    elif "TH알고리즘" in strategy_name or "버핏" in strategy_name:
+        last_hma = df['HMA'].iloc[-1] if 'HMA' in df.columns else 0
+        titles = (f"{strategy_name} ({code}) <span style='{style_g}'>Price: {int(last_price):,}</span>", 
+                  f"Zero-Lag Trend (HMA) <span style='{style_g}'>{int(last_hma):,}</span>")
+        
         fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08, row_heights=[0.75, 0.25], subplot_titles=titles)
+        
         fig.add_trace(go.Candlestick(x=dates, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name='Price', increasing_line_color='#ef5350', decreasing_line_color='#26a69a'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=dates, y=df['MA200'], line=dict(color='gold', width=2.5), name='SMA 200'), row=1, col=1)
-        fig.add_trace(go.Scatter(x=dates, y=df['RSI'], line=dict(color='#a29bfe', width=1.5), name='RSI'), row=2, col=1)
+        
+        if 'HMA' in df.columns:
+            fig.add_trace(go.Scatter(x=dates, y=df['HMA'], line=dict(color='cyan', width=2), name='HMA (Trend)'), row=1, col=1)
+            
+            # AI 예측 경로 (음영) 시각화
+            last_date = dates[-1]
+            future_dates = [last_date + pd.Timedelta(days=i) for i in range(1, 6)]
+            slope = df['HMA'].iloc[-1] - df['HMA'].iloc[-2]
+            future_prices = [last_price + (slope * i) for i in range(1, 6)]
+            
+            fig.add_trace(go.Scatter(x=future_dates, y=future_prices, line=dict(color='magenta', dash='dot'), name='AI Forecast'), row=1, col=1)
+
+        fig.add_trace(go.Scatter(x=dates, y=df['ATR'], line=dict(color='#fab1a0', width=1.5), name='Volatility (ATR)'), row=2, col=1)
         fig.update_xaxes(range=[start_date, end_date + pd.DateOffset(days=5)], row=2, col=1)
+
     elif "VWAP" in strategy_name:
         last_vol = df['Volume'].iloc[-1]; last_mfi = df['MFI'].iloc[-1]
         titles = (f"{strategy_name} ({code}) <span style='{style_g}'>Price: {int(last_price):,}</span>", f"Volume <span style='{style_g}'>{int(last_vol):,}</span>", f"MFI <span style='{style_p}'>{last_mfi:.1f}</span>")
@@ -134,9 +154,9 @@ def draw_strategy_chart(df, code, strategy_name):
     if not buys.empty:
         fig.add_trace(go.Scatter(x=buys.index.strftime('%Y-%m-%d'), y=buys['Low']*0.98, mode='markers', marker=dict(symbol='triangle-up', size=12, color='#39ff14'), name='BUY'), row=1, col=1)
     
-    fig.update_layout(height=800 if strategy_name in ["터틀", "엘리트", "DBB", "BNF", "스퀴즈", "버핏", "VWAP"] else 1000, 
+    fig.update_layout(height=800 if strategy_name in ["터틀", "엘리트", "DBB", "BNF", "스퀴즈", "TH알고리즘", "버핏", "VWAP"] else 1000, 
                       template="plotly_dark", showlegend=True, xaxis_rangeslider_visible=False,
                       legend=dict(x=0.01, y=0.99, bgcolor='#000000', bordercolor='#444', borderwidth=1, font=dict(size=10, color="white")))
-    rows_cnt = 2 if strategy_name in ["터틀", "버핏"] else (3 if strategy_name in ["엘리트", "DBB", "BNF", "스퀴즈", "VWAP"] else 5)
+    rows_cnt = 2 if strategy_name in ["터틀", "TH알고리즘", "버핏"] else (3 if strategy_name in ["엘리트", "DBB", "BNF", "스퀴즈", "VWAP"] else 5)
     for i in range(1, rows_cnt + 1): fig.update_yaxes(side="right", showticklabels=True, row=i, col=1)
     return fig

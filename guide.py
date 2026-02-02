@@ -28,10 +28,13 @@ def generate_concept_chart(strategy_type):
     elif strategy_type == "squeeze":
         y = np.concatenate([np.full(50, 50), np.linspace(50, 100, 50)])
         fig.add_trace(go.Scatter(x=x, y=y, line=dict(color='white')))
-    elif strategy_type == "buffett":
-        y = x + 50
-        fig.add_trace(go.Scatter(x=x, y=y, line=dict(color='gold')))
-        fig.add_trace(go.Scatter(x=x, y=x+40, line=dict(color='white')))
+    elif strategy_type == "th_algo":
+        # TH알고리즘: 주가(White)가 HMA(Cyan) 위에서 상승하는 모습
+        y = x**1.1 + np.random.normal(0, 2, 100)
+        hma = x**1.1 - 5  # HMA가 주가 바로 아래서 따라감
+        fig.add_trace(go.Scatter(x=x, y=y, line=dict(color='white', width=2), name='Price'))
+        fig.add_trace(go.Scatter(x=x, y=hma, line=dict(color='cyan', width=2), name='HMA Trend'))
+        fig.add_trace(go.Scatter(x=x, y=y, fill='tonexty', fillcolor='rgba(0, 255, 255, 0.1)', line=dict(width=0), name='Bull Zone'))
     elif strategy_type == "vwap":
         y = x + 30 + np.random.normal(0, 2, 100)
         vwap_line = x + 25 
@@ -40,7 +43,7 @@ def generate_concept_chart(strategy_type):
     return fig
 
 def show():
-    st.title("📘 승리 공식: 7가지 실전 매매 가이드 (V28.2)")
+    st.title("📘 승리 공식: 7가지 실전 매매 가이드 (V29.4)")
     st.markdown("---")
     
     st.markdown("""
@@ -105,13 +108,15 @@ def show():
         """)
         st.divider()
         
-        st.subheader("4. 🛡️ 버핏 마켓 게이지 (Long-term)")
-        st.plotly_chart(generate_concept_chart("buffett"), use_container_width=True)
+        # [수정] TH알고리즘으로 변경
+        st.subheader("4. 🧬 TH알고리즘 (Smart Momentum)")
+        st.plotly_chart(generate_concept_chart("th_algo"), use_container_width=True)
         st.markdown("""
-        - **철학:** "장기적으로 우상향하는 주식만 건드려라"
+        - **철학:** "Zero-Lag 기술로 시장의 미세한 맥박을 읽는다"
         - **진입 조건:**
-            1. 주가가 **200일 이동평균선(SMA 200)**을 상향 돌파 (Golden Cross).
-        - **설명:** 200일선은 장기 추세의 생명선입니다. 이 선 위에 있다는 것은 장기 상승 추세임을 의미합니다.
+            1. **HMA 추세 상승:** 후행성이 제거된 Hull Moving Average가 상승 반전.
+            2. **스마트 필터:** 주가가 HMA 위에 위치하며, 과열권(RSI > 75)이 아닐 때 진입.
+        - **설명:** 기존 이평선의 단점(느린 반응)을 극복한 TH알고리즘 지표를 사용합니다. 추세의 초입을 정밀하게 타격하며, ATR 기반의 샹들리에 청산으로 수익을 지킵니다.
         """)
         st.divider()
         

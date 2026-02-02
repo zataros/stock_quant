@@ -10,7 +10,7 @@ import strategies as st_algo
 import ui_components as ui
 
 def scan_worker(full_target, filter_opts, status_container):
-    # [최적화] 백테스트 연산이 벡터화되어 가벼워졌으므로 워커 수 증가 (Speed Up)
+    # [최적화] 백테스트 연산이 벡터화되어 가벼워졌으므로 워커 수 유지
     workers = 8  
     total = len(full_target)
     
@@ -41,16 +41,17 @@ def scan_worker(full_target, filter_opts, status_container):
                     break
                 
                 try:
-                    res = future.result(timeout=15) # 타임아웃 약간 여유있게
+                    res = future.result(timeout=15)
                     
                     if res:
                         d = res['전략_리스트']
                         match = False
                         
+                        # [핵심 수정] TH알고리즘으로 이름 변경
                         if s_opts['elite'] and any("엘리트" in s for s in d): match = True
                         if s_opts['dbb'] and any("DBB" in s for s in d): match = True
                         if s_opts['bnf'] and any("BNF" in s for s in d): match = True
-                        if s_opts['buffett'] and any("버핏" in s for s in d): match = True
+                        if s_opts['th_algo'] and any("TH알고리즘" in s for s in d): match = True
                         if s_opts['vwap'] and any("VWAP" in s for s in d): match = True
                         if s_opts['turtle'] and any("터틀" in s for s in d): match = True
                         if s_opts['ai'] and any("AI스퀴즈" in s for s in d): match = True
@@ -108,7 +109,7 @@ def run():
                 'elite': sc[0].checkbox(get_label("⚡ 엘리트", "⚡엘리트"), value=True),
                 'dbb': sc[1].checkbox(get_label("🔥 DBB", "🔥DBB"), value=False),
                 'bnf': sc[2].checkbox(get_label("💧 BNF", "💧BNF"), value=False),
-                'buffett': sc[3].checkbox(get_label("🛡️ 버핏", "🛡️버핏"), value=False),
+                'th_algo': sc[3].checkbox(get_label("🧬 TH알고리즘", "🧬TH알고리즘"), value=True), 
                 'vwap': sc[4].checkbox(get_label("⚓ VWAP", "⚓VWAP"), value=False),
                 'turtle': sc[5].checkbox(get_label("🐢 터틀", "🐢터틀"), value=False),
                 'ai': sc[6].checkbox(get_label("🤖 AI스퀴즈", "🤖AI스퀴즈"), value=False)
@@ -209,7 +210,7 @@ def run():
             "현재가_RAW": None, "chart_dates": None, "chart_open": None, "chart_high": None, "chart_low": None, "chart_close": None, 
             "chart_vol": None, "chart_ma": None, "chart_up": None, "chart_down": None, 
             "chart_up1": None, "chart_down1": None,
-            "vwap_val": None, "mfi_line": None, "avwap": None,
+            "vwap_val": None, "mfi_line": None, "avwap": None, "HMA": None,
             "전략_리스트": None, "Bandwidth": None, "Disparity25": None, "ai_report_html": None, 
             "RSI": None, "MA20": None, "MA5": None, "macd": None, "macd_sig": None, "macd_hist": None, 
             "stoch_k": None, "stoch_d": None, "rsi_line": None, "ATR": None, "High20": None,
