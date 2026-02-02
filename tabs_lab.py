@@ -79,12 +79,12 @@ def run():
                 with st.spinner(f"'{real_ticker}' 데이터를 정밀 분석 중입니다..."):
                     raw_df = st_algo.fetch_data(real_ticker)
                     if raw_df is not None and not raw_df.empty:
-                        # [수정] TH알고리즘 반영
+                        # [수정] ui_components.py의 emoji_map 키와 완벽하게 일치시킴
                         strat_mapping = [
-                            ("🐢 터틀", "🐢 터틀 트레이딩"), ("⚡ 엘리트", "⚡ 엘리트 매매법"),
-                            ("🔥 DBB", "🔥 DBB (더블볼린저)"), ("💧 BNF", "💧 BNF (과매도)"),
-                            ("🤖 AI스퀴즈", "🤖 AI 스퀴즈"), ("🧬 TH알고리즘", "🧬 TH알고리즘"),
-                            ("⚓ VWAP", "⚓ VWAP (지지선)")
+                            ("🔫 하이퍼스나이퍼", "🔫 하이퍼스나이퍼"), 
+                            ("🧬 TH알고리즘", "🧬 TH알고리즘"),
+                            ("🐢 터틀", "🐢 터틀 트레이딩"), 
+                            ("💧 BNF", "💧 BNF (과매도)")
                         ]
                         master_consensus = {}
                         master_details = {}
@@ -108,11 +108,12 @@ def run():
             m_pack = st.session_state['lab_master_result']
             st.divider()
             st.subheader(f"📊 {m_pack['ticker']} ({m_pack['name']}) 종합 진단 결과")
+            
+            # 여기서 consensus 딕셔너리가 ui_components에 전달됨
             st.markdown(ui.render_consensus_html(m_pack['consensus']), unsafe_allow_html=True)
             
-            # [수정] 탭 이름 변경
-            s_tabs = st.tabs(["🐢 터틀", "⚡ 엘리트", "🔥 DBB", "💧 BNF", "🤖 AI스퀴즈", "🧬 TH알고리즘", "⚓ VWAP"])
-            tab_names = ["🐢 터틀 트레이딩", "⚡ 엘리트 매매법", "🔥 DBB (더블볼린저)", "💧 BNF (과매도)", "🤖 AI 스퀴즈", "🧬 TH알고리즘", "⚓ VWAP (지지선)"]
+            s_tabs = st.tabs(["🔫 하이퍼스나이퍼", "🧬 TH알고리즘", "🐢 터틀", "💧 BNF"])
+            tab_names = ["🔫 하이퍼스나이퍼", "🧬 TH알고리즘", "🐢 터틀 트레이딩", "💧 BNF (과매도)"]
             mkt_hint = "US" if m_pack['ticker'].isalpha() else "KR"
             
             for i, tab in enumerate(s_tabs):
@@ -124,13 +125,8 @@ def run():
                         c1.markdown(f"**현재 신호**: :{sig_color}[**{res['signal']}**]")
                         c1.markdown(f"**현재가**: {st_algo.format_price(res['price'], mkt_hint, m_pack['ticker'])}")
                         
-                        if "스퀴즈" in tab_names[i]: c2.metric("밴드폭", f"{res['bandwidth']:.3f}")
-                        elif "BNF" in tab_names[i]: c2.metric("이격도", f"{res['disparity']:.1f}%")
-                        else:
-                            atr_val = st_algo.format_price(res['atr'], mkt_hint, m_pack['ticker'])
-                            c2.markdown(f"**ATR (변동성)**: {atr_val}")
-
-                        # [UI 복구] 매수 신호 시 상세 정보 카드 표시
+                        if "msg" in res: c2.info(f"💡 {res['msg']}")
+                        
                         if "BUY" in res['signal']:
                             st.success(f"✅ **[{tab_names[i]}] 진입 조건 만족!**")
                             currency_symbol = "$" if res['is_us'] else "₩"

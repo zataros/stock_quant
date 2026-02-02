@@ -16,15 +16,18 @@ class StrategyBase:
         return f"""<div style="background-color:#1a1c24; padding:15px; border-radius:10px;"><div style="font-size:1.4em; font-weight:bold; color:#fff;">{title}</div><ul style="color:#ddd; margin:10px 0;">{analysis}</ul><div style="background-color:#25262b; border-left:5px solid #00d2d3; padding:10px; color:#fff;">{action}</div></div>"""
 
 # ==========================================
-# 1. TH 알고리즘 (핵심)
+# 1. TH 알고리즘 (Smart Momentum)
 # ==========================================
 class StrategyTH(StrategyBase):
     name = "🧬TH알고리즘"
     
     def check_signal(self, df):
         curr = df.iloc[-1]; prev = df.iloc[-2]
-        if pd.notnull(curr['HMA']) and pd.notnull(prev['HMA']):
-            if curr['HMA'] > prev['HMA'] and curr['Close'] > curr['HMA'] and curr['RSI'] < 75:
+        if pd.notnull(curr.get('HMA')) and pd.notnull(prev.get('HMA')):
+            trend_reversal = (curr['HMA'] > prev['HMA']) and (prev['HMA'] <= df.iloc[-3]['HMA'])
+            trend_following = (curr['HMA'] > prev['HMA']) and (curr['Close'] > curr['HMA'])
+            
+            if (trend_reversal or trend_following) and curr['RSI'] < 75:
                 slope = (curr['HMA'] - prev['HMA']) / prev['HMA'] * 10000
                 return slope + (curr['RSI'] / 2)
         return 0
@@ -36,27 +39,37 @@ class StrategyTH(StrategyBase):
         return self._make_html(title, analysis, action)
 
     def backtest(self, df):
-        return (df['HMA'] > df['HMA'].shift(1)) & \
-               (df['HMA'].shift(1) <= df['HMA'].shift(2)) & \
-               (df['Close'] > df['HMA'])
+        if 'HMA' not in df.columns: return pd.Series(False, index=df.index)
+        return (df['HMA'] > df['HMA'].shift(1)) & (df['Close'] > df['HMA'])
 
     def deep_dive(self, df):
-        curr = df.iloc[-1]
+        curr = df.iloc[-1]; prev = df.iloc[-2]
+        
+        # [Fix] Chart_Signal 컬럼 생성 필수
         buy_cond = self.backtest(df)
-        df = df.copy(); df['Chart_Signal'] = 0
+        df = df.copy()
+        df['Chart_Signal'] = 0
         df.loc[buy_cond, 'Chart_Signal'] = 1
         
-        signal = "BUY (AI Signal)" if buy_cond.iloc[-1] else ("EXIT" if curr['Close'] < curr['HMA'] else "HOLD")
-        if signal == "BUY (AI Signal)":
-            stop = curr['Close'] - (3.0 * curr['ATR'])
-            target = curr['Close'] + (6.0 * curr['ATR'])
-        else: stop = 0; target = 0
+        hma_up = curr.get('HMA', 0) > prev.get('HMA', 0)
+        price_ok = curr['Close'] > curr.get('HMA', 0)
         
-        # [Fix] df를 반드시 리턴에 포함해야 함
-        return {"signal": signal, "df": df, "entry_price": curr['Close'], "stop_price": stop, "target_price": target}
+        if hma_up and price_ok:
+            if (prev.get('HMA', 0) <= df.iloc[-3].get('HMA', 0)) or (prev['Close'] <= prev.get('HMA', 0)):
+                sig = "BUY (진입)"
+            else:
+                sig = "BUY (추세지속)"
+        else:
+            sig = "Wait"
+            
+        entry = curr['Close']
+        stop = curr['Close'] - (3.0 * curr['ATR'])
+        target = curr['Close'] + (6.0 * curr['ATR'])
+        
+        return {"signal": sig, "df": df, "entry_price": entry, "stop_price": stop, "target_price": target}
 
 # ==========================================
-# 2. 터틀 트레이딩
+# 2. 터틀 트레이딩 (Breakout)
 # ==========================================
 class StrategyTurtle(StrategyBase):
     name = "🐢터틀"
@@ -74,66 +87,22 @@ class StrategyTurtle(StrategyBase):
 
     def deep_dive(self, df):
         curr = df.iloc[-1]
-        buy_cond = self.backtest(df)
-        exit_cond = (df['Close'] < df['Low10'])
-        df = df.copy(); df['Chart_Signal'] = 0
-        df.loc[buy_cond, 'Chart_Signal'] = 1; df.loc[exit_cond, 'Chart_Signal'] = -1
         
-        if buy_cond.iloc[-1]: sig = "BUY"
+        # [Fix] Chart_Signal 컬럼 생성 필수
+        buy_cond = self.backtest(df)
+        df = df.copy()
+        df['Chart_Signal'] = 0
+        df.loc[buy_cond, 'Chart_Signal'] = 1
+        
+        if buy_cond.iloc[-1]: sig = "BUY (돌파)"
         elif curr['Close'] < curr['Low10']: sig = "EXIT"
-        elif curr['Close'] > curr['MA200']: sig = "HOLD"
+        elif curr['Close'] > curr['MA200']: sig = "HOLD (보유)"
         else: sig = "Wait"
+        
         return {"signal": sig, "df": df, "entry_price": curr['High20'], "stop_price": curr['High20'] - 2*curr['ATR'], "target_price": curr['High20'] + 4*curr['ATR']}
 
 # ==========================================
-# 3. 엘리트 매매법
-# ==========================================
-class StrategyElite(StrategyBase):
-    name = "⚡엘리트"
-    def check_signal(self, df):
-        curr = df.iloc[-1]; prev = df.iloc[-2]
-        if (curr['EMA10'] > curr['EMA20'] > curr['EMA60']) and (curr['MACD'] > curr['Signal'] and prev['MACD'] <= prev['Signal']):
-            return 10 + (curr['RSI'] - 50)
-        return 0
-    
-    def get_report(self, item):
-        return self._make_html("⚡ 엘리트: 골든크로스", "<li><b>상황:</b> 정배열 + MACD 신호.</li>", "정석 매수.")
-
-    def backtest(self, df):
-        return (df['EMA10'] > df['EMA20']) & (df['EMA20'] > df['EMA60']) & (df['MACD'] > df['Signal']) & (df['MACD'].shift(1) <= df['Signal'].shift(1))
-
-    def deep_dive(self, df):
-        curr = df.iloc[-1]
-        buy_cond = self.backtest(df)
-        df = df.copy(); df['Chart_Signal'] = 0; df.loc[buy_cond, 'Chart_Signal'] = 1
-        sig = "BUY" if buy_cond.iloc[-1] else ("HOLD" if (curr['EMA10'] > curr['EMA20']) else "Wait")
-        return {"signal": sig, "df": df, "entry_price": curr['Close'], "stop_price": curr['MA20'], "target_price": curr['Close']*1.1}
-
-# ==========================================
-# 4. DBB (더블 볼린저)
-# ==========================================
-class StrategyDBB(StrategyBase):
-    name = "🔥DBB"
-    def check_signal(self, df):
-        curr = df.iloc[-1]; prev = df.iloc[-2]
-        if curr['Close'] > curr['BB_Up2'] and prev['Close'] <= prev['BB_Up2']:
-            return ((curr['Close']/curr['BB_Up2']) - 1) * 1000
-        return 0
-
-    def get_report(self, item):
-        return self._make_html("🔥 DBB: 밴드 돌파", "<li><b>상황:</b> 볼린저 상단 강력 돌파.</li>", "돌파 매매 진입.")
-
-    def backtest(self, df):
-        return (df['Close'] > df['BB_Up2']) & (df['Close'].shift(1) <= df['BB_Up2'].shift(1))
-
-    def deep_dive(self, df):
-        curr = df.iloc[-1]; buy_cond = self.backtest(df)
-        df = df.copy(); df['Chart_Signal'] = 0; df.loc[buy_cond, 'Chart_Signal'] = 1
-        sig = "BUY" if buy_cond.iloc[-1] else ("HOLD" if curr['Close'] > curr['BB_Up2'] else "Wait")
-        return {"signal": sig, "df": df, "entry_price": curr['BB_Up2'], "stop_price": curr['Close']*0.97, "target_price": curr['BB_Up2']*1.15}
-
-# ==========================================
-# 5. BNF (과매도)
+# 3. BNF (Rebound)
 # ==========================================
 class StrategyBNF(StrategyBase):
     name = "💧BNF"
@@ -148,69 +117,97 @@ class StrategyBNF(StrategyBase):
         return (df['Disparity25'] <= 90)
 
     def deep_dive(self, df):
-        curr = df.iloc[-1]; buy_cond = (df['Disparity25'] <= 90) & (df['Disparity25'].shift(1) > 90)
-        df = df.copy(); df['Chart_Signal'] = 0; df.loc[buy_cond, 'Chart_Signal'] = 1
-        sig = "BUY" if curr['Disparity25'] <= 90 else "Wait"
+        curr = df.iloc[-1]
+        
+        # [Fix] Chart_Signal 컬럼 생성 필수
+        buy_cond = self.backtest(df)
+        df = df.copy()
+        df['Chart_Signal'] = 0
+        df.loc[buy_cond, 'Chart_Signal'] = 1
+        
+        sig = "BUY (과매도)" if curr['Disparity25'] <= 90 else "Wait"
         return {"signal": sig, "df": df, "entry_price": curr['Close'], "stop_price": curr['Close']*0.95, "target_price": curr['MA25']}
 
 # ==========================================
-# 6. AI 스퀴즈
+# 4. 하이퍼 스나이퍼 (Hyper Sniper)
 # ==========================================
-class StrategySqueeze(StrategyBase):
-    name = "🤖AI스퀴즈"
+class StrategyHyperSniper(StrategyBase):
+    name = "🔫하이퍼스나이퍼"
+    
     def check_signal(self, df):
+        if len(df) < 60: return 0
         curr = df.iloc[-1]; prev = df.iloc[-2]
-        avg_bw = df['Bandwidth'].rolling(120).mean().iloc[-1]
-        if (prev['Bandwidth'] < 0.15 or prev['Bandwidth'] < avg_bw * 0.7) and \
-           (curr['Volume'] > df['Volume'].rolling(20).mean().iloc[-1] * 1.5) and \
-           (curr['Close'] > prev['Close']):
-            return (curr['Volume'] / df['Volume'].rolling(20).mean().iloc[-1]) * 10
+        
+        vwap_ok = True
+        if 'VWAP' in df.columns and pd.notnull(curr.get('VWAP')):
+            vwap_ok = curr['Close'] >= curr['VWAP']
+            
+        avg_bw = df['Bandwidth'].rolling(20).mean().iloc[-1]
+        squeeze_ok = (curr['Bandwidth'] < 0.20) or (curr['Bandwidth'] < avg_bw)
+        elite_ok = curr['EMA10'] > curr['EMA20']
+        
+        breakout = (prev['Close'] < prev['MA20']) and (curr['Close'] > curr['MA20'])
+        support = (curr['Close'] > curr['MA20']) and (curr['Low'] <= curr['MA20']*1.03) and (curr['Close'] > curr['Open'])
+        trigger_ok = breakout or support
+        momentum_ok = curr['MACD_Hist'] > prev['MACD_Hist']
+        
+        if vwap_ok and squeeze_ok and elite_ok and trigger_ok and momentum_ok:
+            score = 80
+            if breakout: score += 10 
+            if curr['Volume'] > df['Volume'].rolling(20).mean().iloc[-1]: score += 10
+            return score
         return 0
 
     def get_report(self, item):
-        return self._make_html("🚀 AI스퀴즈: 에너지 폭발", "<li><b>상황:</b> 응축 후 대량거래 폭발.</li>", "공격적 매수.")
+        return self._make_html(
+            "🔫 하이퍼 스나이퍼", 
+            "<li><b>상태:</b> 에너지 응축(Squeeze) + 세력 지지(VWAP).</li><li><b>신호:</b> 20일선 맥점 돌파/지지 성공.</li>", 
+            f"강력 매수. 🛑 손절: {format_price(item['MA20']*0.97, item['시장'], item['코드'])}"
+        )
 
     def backtest(self, df):
-        avg_bw = df['Bandwidth'].rolling(120).mean()
-        sqz = (df['Bandwidth'] < 0.15) | (df['Bandwidth'] < avg_bw * 0.7)
-        vol = df['Volume'] > df['Volume'].rolling(20).mean() * 1.5
-        return sqz & vol & (df['Close'] > df['MA20'])
+        cond_cross = (df['Close'] > df['MA20']) & (df['Close'].shift(1) <= df['MA20'].shift(1))
+        cond_elite = df['EMA10'] > df['EMA20']
+        return cond_cross & cond_elite
 
     def deep_dive(self, df):
-        curr = df.iloc[-1]; buy_cond = self.backtest(df)
-        df = df.copy(); df['Chart_Signal'] = 0; df.loc[buy_cond, 'Chart_Signal'] = 1
-        sig = "BUY" if buy_cond.iloc[-1] else "Wait"
-        return {"signal": sig, "df": df, "entry_price": curr['Close'], "stop_price": curr['MA20'], "target_price": curr['Close']*1.2}
-
-# ==========================================
-# 7. VWAP
-# ==========================================
-class StrategyVWAP(StrategyBase):
-    name = "⚓VWAP"
-    def check_signal(self, df):
-        curr = df.iloc[-1]
-        if pd.notnull(curr['VWAP']):
-            diff = abs(curr['Close'] - curr['VWAP']) / curr['VWAP']
-            if diff <= 0.03: return (1 - (diff / 0.03)) * 50
-        return 0
-
-    def get_report(self, item):
-        return self._make_html("⚓ VWAP: 세력선 지지", "<li><b>상황:</b> VWAP 부근 지지 확인.</li>", "눌림목 매수.")
-
-    def backtest(self, df):
-        return (abs(df['Close'] - df['VWAP']) / df['VWAP'] <= 0.03)
-
-    def deep_dive(self, df):
-        curr = df.iloc[-1]
-        if pd.isnull(curr['VWAP']): return {"signal": "N/A", "df": df, "entry_price": 0, "stop_price": 0, "target_price": 0}
+        curr = df.iloc[-1]; prev = df.iloc[-2]
+        is_above_ma20 = curr['Close'] > curr['MA20']
+        elite_ok = curr['EMA10'] > curr['EMA20']
+        
+        breakout = (prev['Close'] < prev['MA20']) and is_above_ma20
+        support = is_above_ma20 and (curr['Low'] <= curr['MA20'] * 1.03) and (curr['Close'] > curr['Open'])
+        
+        score_msg = []
+        if 'VWAP' in df.columns and pd.notnull(curr.get('VWAP')):
+            if curr['Close'] >= curr['VWAP']: score_msg.append("VWAP지지✅")
+            else: score_msg.append("VWAP이탈❌")
+        if curr['Bandwidth'] < 0.25: score_msg.append("응축됨✅")
+        if elite_ok: score_msg.append("정배열✅")
+        
+        # [Fix] Chart_Signal 컬럼 생성 필수 (이미 되어 있음)
         buy_cond = self.backtest(df)
-        df = df.copy(); df['Chart_Signal'] = 0; df.loc[buy_cond, 'Chart_Signal'] = 1
-        is_buy = abs(curr['Close'] - curr['VWAP']) / curr['VWAP'] <= 0.03
-        sig = "BUY (지지권)" if is_buy else ("HOLD" if curr['Close'] > curr['VWAP'] else "Wait")
-        return {"signal": sig, "df": df, "entry_price": curr['VWAP'], "stop_price": curr['VWAP']*0.97, "target_price": curr['VWAP']*1.15}
+        df = df.copy(); df['Chart_Signal'] = 0
+        df.loc[buy_cond, 'Chart_Signal'] = 1
+        
+        if breakout: sig = "BUY (돌파)"
+        elif support and elite_ok: sig = "BUY (눌림목)"
+        elif is_above_ma20 and elite_ok: sig = "HOLD (추세중)"
+        elif not is_above_ma20: sig = "Wait (20일선 이탈)"
+        else: sig = "Wait"
+        
+        entry = curr['Close']
+        stop = curr['MA20'] * 0.97
+        target = entry * 1.15
+        
+        return {"signal": sig, "df": df, "entry_price": entry, "stop_price": stop, "target_price": target, "msg": " ".join(score_msg)}
 
+# ==========================================
 # 활성화된 전략 목록
+# ==========================================
 ACTIVE_STRATEGIES = [
-    StrategyTH(), StrategyTurtle(), StrategyElite(), StrategyDBB(), 
-    StrategyBNF(), StrategySqueeze(), StrategyVWAP()
+    StrategyHyperSniper(), 
+    StrategyTH(),          
+    StrategyTurtle(),      
+    StrategyBNF()          
 ]
