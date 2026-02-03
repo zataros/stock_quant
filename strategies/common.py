@@ -3,15 +3,27 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
-import database as db  # DB 모듈 연동 필수
+import database as db
+import requests # [추가] 가짜 신분증 생성을 위해 필요
 
 # -----------------------------------------------------------------------------
-# 1. 환율 정보 (yfinance 사용)
+# [신규] 야후 파이낸스 차단 우회용 세션 생성 (가짜 신분증)
+# -----------------------------------------------------------------------------
+def get_yahoo_session():
+    session = requests.Session()
+    # 일반 웹브라우저인 척 위장하는 헤더
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    })
+    return session
+
+# -----------------------------------------------------------------------------
+# 1. 환율 정보
 # -----------------------------------------------------------------------------
 def get_exchange_rate():
     try:
-        # Ticker 객체 사용으로 스레드 충돌 방지
-        ticker = yf.Ticker("USDKRW=X")
+        # session 추가
+        ticker = yf.Ticker("USDKRW=X", session=get_yahoo_session())
         hist = ticker.history(period="5d")
         if not hist.empty:
             return float(hist['Close'].iloc[-1])
@@ -32,41 +44,37 @@ def format_price(val, market="KR", code=None):
     except: return str(val)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 수집 (DB + yfinance Ticker + 스레드 안전)
+# 2. 데이터 수집
 # -----------------------------------------------------------------------------
 def fetch_data(code):
     try:
-        # 티커 변환
         ticker_symbol = str(code)
         if ticker_symbol.isdigit(): 
             ticker_symbol = f"{code}.KS"
 
-        # A. DB에서 마지막 날짜 확인
         last_date_str = db.get_last_price_date(code)
         today = datetime.now().date()
         
         should_update = False
-        start_date = datetime.now() - timedelta(days=730) # 기본 2년
+        start_date = datetime.now() - timedelta(days=730)
         
         if last_date_str:
             last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
-            # 어제보다 과거 데이터면 업데이트
             if last_date < today - timedelta(days=1): 
                 should_update = True
                 start_date = last_date + timedelta(days=1)
         else:
-            should_update = True # DB에 없으면 전체 다운로드
+            should_update = True
 
-        # B. 업데이트 필요 시 다운로드 & DB 저장
         if should_update:
             try:
-                stock = yf.Ticker(ticker_symbol)
+                # [수정] session 파라미터 추가
+                stock = yf.Ticker(ticker_symbol, session=get_yahoo_session())
                 df_new = stock.history(start=start_date, auto_adjust=False)
                 
-                # 코스피 없으면 코스닥 재시도
                 if df_new.empty and ticker_symbol.endswith(".KS"):
                     ticker_symbol = ticker_symbol.replace(".KS", ".KQ")
-                    stock = yf.Ticker(ticker_symbol)
+                    stock = yf.Ticker(ticker_symbol, session=get_yahoo_session())
                     df_new = stock.history(start=start_date, auto_adjust=False)
                 
                 if not df_new.empty:
@@ -75,7 +83,6 @@ def fetch_data(code):
                     db.save_daily_price(df_new, code)
             except Exception: pass 
 
-        # C. 분석은 무조건 DB 데이터로 수행 (속도/안정성)
         df_final = db.load_daily_price(code)
         
         if df_final is None or len(df_final) < 60:
@@ -87,7 +94,7 @@ def fetch_data(code):
         return None
 
 # -----------------------------------------------------------------------------
-# 3. 보조지표 계산
+# 3. 보조지표 계산 (기존 유지)
 # -----------------------------------------------------------------------------
 def calculate_hma(series, period=14):
     half_length = int(period / 2)
@@ -105,9 +112,7 @@ def calculate_indicators(df):
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['MA200'] = df['Close'].rolling(window=200).mean()
-    
     df['HMA'] = calculate_hma(df['Close'], period=14)
-    
     df['EMA10'] = df['Close'].ewm(span=10, adjust=False).mean()
     df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA60'] = df['Close'].ewm(span=60, adjust=False).mean()
@@ -121,7 +126,6 @@ def calculate_indicators(df):
     std20 = df['Close'].rolling(window=20).std()
     df['BB_Up2'] = df['MA20'] + (std20 * 2)
     df['BB_Dn2'] = df['MA20'] - (std20 * 2)
-    
     ma20_safe = df['MA20'].replace(0, np.nan)
     df['Bandwidth'] = (df['BB_Up2'] - df['BB_Dn2']) / ma20_safe
     
@@ -151,7 +155,6 @@ def calculate_indicators(df):
     neg_idx = df['TP'] < df['TP'].shift(1)
     pos_flow[pos_idx] = df.loc[pos_idx, 'TPV']
     neg_flow[neg_idx] = df.loc[neg_idx, 'TPV']
-    
     pos_mf_sum = pos_flow.rolling(14).sum()
     neg_mf_sum = neg_flow.rolling(14).sum()
     mfi_ratio = pos_mf_sum / neg_mf_sum.replace(0, 1)
@@ -169,21 +172,22 @@ def calculate_indicators(df):
     return df
 
 # -----------------------------------------------------------------------------
-# 4. 재무 정보 상세 조회 (정확도 개선 버전)
+# 4. 재무 정보 상세 조회 (세션 적용 + 기존 로직 유지)
 # -----------------------------------------------------------------------------
 def get_financial_summary(code):
     try:
         ticker_symbol = str(code)
         if ticker_symbol.isdigit(): 
             ticker_symbol = f"{code}.KS"
-            
-        stock = yf.Ticker(ticker_symbol)
+        
+        # [수정] session 파라미터 추가하여 차단 우회 시도
+        stock = yf.Ticker(ticker_symbol, session=get_yahoo_session())
         info = stock.info
         
         if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
             if ticker_symbol.endswith(".KS"):
                 ticker_symbol = ticker_symbol.replace(".KS", ".KQ")
-                stock = yf.Ticker(ticker_symbol)
+                stock = yf.Ticker(ticker_symbol, session=get_yahoo_session())
                 info = stock.info
 
         if not info: return None
@@ -232,7 +236,7 @@ def get_financial_summary(code):
                         if op == 0 and rev == 0: continue
 
                         if is_us: op_str = f"${op/1_000_000:.0f}M"
-                        else: op_str = f"{op/100_000_000:.0f}억" # 1억 단위 수정됨
+                        else: op_str = f"{op/100_000_000:.0f}억" # 1억 단위
                         
                         if rev and rev > 0:
                             margin = (op / rev) * 100
