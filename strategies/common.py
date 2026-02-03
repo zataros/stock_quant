@@ -3,14 +3,14 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from datetime import datetime, timedelta
-import database as db
+import database as db  # DB 모듈 연동 필수
 
 # -----------------------------------------------------------------------------
-# 환율 정보
+# 1. 환율 정보 (yfinance 사용)
 # -----------------------------------------------------------------------------
 def get_exchange_rate():
     try:
-        # 환율은 캐싱 없이 가볍게 호출하거나, 필요시 별도 처리
+        # Ticker 객체 사용으로 스레드 충돌 방지
         ticker = yf.Ticker("USDKRW=X")
         hist = ticker.history(period="5d")
         if not hist.empty:
@@ -32,78 +32,62 @@ def format_price(val, market="KR", code=None):
     except: return str(val)
 
 # -----------------------------------------------------------------------------
-# [핵심 수정] 데이터 수집 (스레드 안전성 강화: Ticker 객체 사용)
+# 2. 데이터 수집 (DB + yfinance Ticker + 스레드 안전)
 # -----------------------------------------------------------------------------
 def fetch_data(code):
-    """
-    yf.download 대신 yf.Ticker().history() 사용 -> 멀티스레드 충돌 방지
-    """
     try:
-        # 티커 변환 (한국 주식)
+        # 티커 변환
         ticker_symbol = str(code)
         if ticker_symbol.isdigit(): 
             ticker_symbol = f"{code}.KS"
 
-        # 1. DB에서 마지막 저장일 확인
+        # A. DB에서 마지막 날짜 확인
         last_date_str = db.get_last_price_date(code)
         today = datetime.now().date()
         
         should_update = False
-        
-        # 날짜 계산 (기본 2년)
-        start_date = datetime.now() - timedelta(days=730)
+        start_date = datetime.now() - timedelta(days=730) # 기본 2년
         
         if last_date_str:
             last_date = datetime.strptime(last_date_str, "%Y-%m-%d").date()
+            # 어제보다 과거 데이터면 업데이트
             if last_date < today - timedelta(days=1): 
                 should_update = True
-                # 마지막 저장일 다음날부터
                 start_date = last_date + timedelta(days=1)
         else:
-            should_update = True
+            should_update = True # DB에 없으면 전체 다운로드
 
-        # [업데이트 필요 시] 인터넷에서 다운로드
+        # B. 업데이트 필요 시 다운로드 & DB 저장
         if should_update:
             try:
-                # [중요] yf.Ticker 객체 생성 (독립 인스턴스)
                 stock = yf.Ticker(ticker_symbol)
+                df_new = stock.history(start=start_date, auto_adjust=False)
                 
-                # start_date부터 오늘까지 데이터 요청
-                df_new = stock.history(start=start_date, auto_adjust=False) # 수정주가 반영 X (필요시 True)
-                
-                # 코스피(.KS) 데이터 없으면 코스닥(.KQ) 시도
+                # 코스피 없으면 코스닥 재시도
                 if df_new.empty and ticker_symbol.endswith(".KS"):
                     ticker_symbol = ticker_symbol.replace(".KS", ".KQ")
                     stock = yf.Ticker(ticker_symbol)
                     df_new = stock.history(start=start_date, auto_adjust=False)
                 
                 if not df_new.empty:
-                    # 타임존 제거
                     if df_new.index.tz is not None:
                         df_new.index = df_new.index.tz_localize(None)
-                    
-                    # DB 저장
                     db.save_daily_price(df_new, code)
-                    
-            except Exception as e:
-                # print(f"Download error {code}: {e}")
-                pass 
+            except Exception: pass 
 
-        # 2. DB에서 전체 데이터 로드 (분석은 항상 DB 데이터로)
+        # C. 분석은 무조건 DB 데이터로 수행 (속도/안정성)
         df_final = db.load_daily_price(code)
         
-        # 데이터가 너무 적으면 분석 불가
         if df_final is None or len(df_final) < 60:
             return None
             
-        # 3. 보조지표 계산
         return calculate_indicators(df_final)
 
-    except Exception as e:
+    except Exception:
         return None
 
 # -----------------------------------------------------------------------------
-# 보조지표 계산 (기존 유지)
+# 3. 보조지표 계산
 # -----------------------------------------------------------------------------
 def calculate_hma(series, period=14):
     half_length = int(period / 2)
@@ -115,49 +99,36 @@ def calculate_hma(series, period=14):
     return hma
 
 def calculate_indicators(df):
-    # 필수 컬럼 존재 확인
     if 'Close' not in df.columns: return df
 
-    # 이동평균
     df['MA5'] = df['Close'].rolling(window=5).mean()
     df['MA20'] = df['Close'].rolling(window=20).mean()
     df['MA60'] = df['Close'].rolling(window=60).mean()
     df['MA200'] = df['Close'].rolling(window=200).mean()
     
-    # HMA
     df['HMA'] = calculate_hma(df['Close'], period=14)
     
-    # EMA
     df['EMA10'] = df['Close'].ewm(span=10, adjust=False).mean()
     df['EMA20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA60'] = df['Close'].ewm(span=60, adjust=False).mean()
     
-    # MACD
     exp12 = df['Close'].ewm(span=12, adjust=False).mean()
     exp26 = df['Close'].ewm(span=26, adjust=False).mean()
     df['MACD'] = exp12 - exp26
     df['Signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
     df['MACD_Hist'] = df['MACD'] - df['Signal']
     
-    # Bollinger Bands
     std20 = df['Close'].rolling(window=20).std()
     df['BB_Up2'] = df['MA20'] + (std20 * 2)
     df['BB_Dn2'] = df['MA20'] - (std20 * 2)
     
-    # Zero division 방지
     ma20_safe = df['MA20'].replace(0, np.nan)
     df['Bandwidth'] = (df['BB_Up2'] - df['BB_Dn2']) / ma20_safe
     
-    # RSI
     delta = df['Close'].diff()
-    up = delta.clip(lower=0)
-    down = -1 * delta.clip(upper=0)
-    roll_up = up.rolling(window=14).mean()
-    roll_down = down.rolling(window=14).mean()
-    rs = roll_up / roll_down
-    df['RSI'] = 100 - (100 / (1 + rs))
+    up, down = delta.clip(lower=0), -1 * delta.clip(upper=0)
+    df['RSI'] = 100 - (100 / (1 + up.rolling(14).mean() / down.rolling(14).mean()))
     
-    # Stochastic
     n = 14
     low_n = df['Low'].rolling(window=n).min()
     high_n = df['High'].rolling(window=n).max()
@@ -166,50 +137,39 @@ def calculate_indicators(df):
     df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
     df['Stoch_SlowD'] = df['Stoch_D'].rolling(window=3).mean()
     
-    # Disparity (이격도)
     ma25 = df['Close'].rolling(window=25).mean()
     df['MA25'] = ma25
     df['Disparity25'] = (df['Close'] / ma25) * 100
     
-    # VWAP
     df['TP'] = (df['High'] + df['Low'] + df['Close']) / 3
     df['TPV'] = df['TP'] * df['Volume']
-    cum_tpv = df['TPV'].cumsum()
-    cum_vol = df['Volume'].cumsum()
-    df['VWAP'] = cum_tpv / cum_vol.replace(0, np.nan)
+    df['VWAP'] = df['TPV'].cumsum() / df['Volume'].cumsum().replace(0, np.nan)
 
-    # MFI
     pos_flow = pd.Series(0.0, index=df.index)
     neg_flow = pd.Series(0.0, index=df.index)
-    
-    delta_tp = df['TP'].diff()
-    pos_idx = delta_tp > 0
-    neg_idx = delta_tp < 0
-    
+    pos_idx = df['TP'] > df['TP'].shift(1)
+    neg_idx = df['TP'] < df['TP'].shift(1)
     pos_flow[pos_idx] = df.loc[pos_idx, 'TPV']
     neg_flow[neg_idx] = df.loc[neg_idx, 'TPV']
     
-    mfi_len = 14
-    pos_mf_sum = pos_flow.rolling(mfi_len).sum()
-    neg_mf_sum = neg_flow.rolling(mfi_len).sum()
+    pos_mf_sum = pos_flow.rolling(14).sum()
+    neg_mf_sum = neg_flow.rolling(14).sum()
     mfi_ratio = pos_mf_sum / neg_mf_sum.replace(0, 1)
     df['MFI'] = 100 - (100 / (1 + mfi_ratio))
 
-    # Turtle & ATR
     df['High20'] = df['High'].rolling(window=20).max().shift(1)
     df['Low10']  = df['Low'].rolling(window=10).min().shift(1)
     
-    prev_close = df['Close'].shift(1)
     tr1 = df['High'] - df['Low']
-    tr2 = (df['High'] - prev_close).abs()
-    tr3 = (df['Low'] - prev_close).abs()
+    tr2 = (df['High'] - df['Close'].shift(1)).abs()
+    tr3 = (df['Low'] - df['Close'].shift(1)).abs()
     df['TR'] = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     df['ATR'] = df['TR'].rolling(window=20).mean()
         
     return df
 
 # -----------------------------------------------------------------------------
-# [업그레이드 Fix] 재무 정보 상세 (단위 수정 + 부채비율 직접 계산)
+# 4. 재무 정보 상세 조회 (정확도 개선 버전)
 # -----------------------------------------------------------------------------
 def get_financial_summary(code):
     try:
@@ -220,7 +180,6 @@ def get_financial_summary(code):
         stock = yf.Ticker(ticker_symbol)
         info = stock.info
         
-        # 데이터 없으면 코스닥 시도
         if not info or ('regularMarketPrice' not in info and 'currentPrice' not in info):
             if ticker_symbol.endswith(".KS"):
                 ticker_symbol = ticker_symbol.replace(".KS", ".KQ")
@@ -241,31 +200,26 @@ def get_financial_summary(code):
             if is_us:
                 usd_val = f"${val/1_000_000_000:.2f}B"
                 try:
-                    # 환율 적용 (get_exchange_rate 함수 활용)
-                    # 이 함수가 상단에 정의되어 있어야 합니다.
-                    rate = 1450.0 # 기본값 (혹은 get_exchange_rate() 호출)
+                    rate = 1450.0 
                     krw_val = val * rate
                     krw_str = f"{krw_val/1_000_000_000_000:.1f}조" if krw_val >= 1e12 else f"{krw_val/1_000_000_000:.0f}억"
                     return f"{usd_val} ({krw_str})"
                 except: return usd_val
             else:
-                # 한국: 조/억 단위
                 if val >= 1_000_000_000_000: return f"{val/1_000_000_000_000:.1f}조"
                 else: return f"{val/1_000_000_000:.0f}억"
 
-        # 2. 영업이익 & 이익률 (과거 확정 실적만 필터링)
+        # 2. 영업이익 (단위 보정 및 필터링)
         op_trend_str = "-"
         margin_trend_str = "-"
         
         try:
             q_fin = stock.quarterly_financials
             if not q_fin.empty:
-                q_fin = q_fin.sort_index(axis=1) # 과거 -> 최신 정렬
-                
-                # 미래 데이터(컨센서스) 제외
+                q_fin = q_fin.sort_index(axis=1)
                 today = pd.Timestamp.now()
                 past_cols = [c for c in q_fin.columns if pd.to_datetime(c) <= today]
-                target_cols = past_cols[-4:] # 최근 4분기
+                target_cols = past_cols[-4:]
                 
                 ops = []
                 margins = []
@@ -277,12 +231,8 @@ def get_financial_summary(code):
                         
                         if op == 0 and rev == 0: continue
 
-                        # [수정] 단위 포맷팅 버그 수정
-                        if is_us: 
-                            op_str = f"${op/1_000_000:.0f}M" # 백만 달러
-                        else: 
-                            # 한국: 1억 = 10^8 (기존 10^9 오류 수정)
-                            op_str = f"{op/100_000_000:.0f}억"
+                        if is_us: op_str = f"${op/1_000_000:.0f}M"
+                        else: op_str = f"{op/100_000_000:.0f}억" # 1억 단위 수정됨
                         
                         if rev and rev > 0:
                             margin = (op / rev) * 100
@@ -299,40 +249,29 @@ def get_financial_summary(code):
                     margin_trend_str = " / ".join(margins)
         except Exception: pass
 
-        # 3. 부채비율 직접 계산 (info 데이터 부정확 해결)
+        # 3. 부채비율 직접 계산
         debt_ratio_val = 0
         try:
             bs = stock.balance_sheet
-            # 최근 결산일 기준
             if not bs.empty:
-                # Total Debt / Stockholders Equity
-                total_debt_keys = ['Total Debt', 'Long Term Debt And Capital Lease Obligation'] # yfinance 키 확인
+                total_debt_keys = ['Total Debt', 'Long Term Debt And Capital Lease Obligation']
                 equity_keys = ['Stockholders Equity', 'Total Equity Gross Minority Interest']
                 
-                debt = 0
-                equity = 0
-                
-                # 부채 찾기
+                debt = 0; equity = 0
                 for k in total_debt_keys:
                     if k in bs.index:
-                        debt = bs.loc[k].iloc[0]
-                        break
-                # 자본 찾기
+                        debt = bs.loc[k].iloc[0]; break
                 for k in equity_keys:
                     if k in bs.index:
-                        equity = bs.loc[k].iloc[0]
-                        break
+                        equity = bs.loc[k].iloc[0]; break
                         
-                if equity > 0:
-                    debt_ratio_val = (debt / equity) * 100
-                else:
-                    debt_ratio_val = info.get('debtToEquity', 0) # 실패 시 info 사용
+                if equity > 0: debt_ratio_val = (debt / equity) * 100
+                else: debt_ratio_val = info.get('debtToEquity', 0)
             else:
                 debt_ratio_val = info.get('debtToEquity', 0)
         except:
             debt_ratio_val = info.get('debtToEquity', 0)
 
-        # PER/PBR
         per = info.get('trailingPE', 0)
         pbr = info.get('priceToBook', 0)
 
