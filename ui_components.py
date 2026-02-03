@@ -130,3 +130,90 @@ def draw_strategy_chart(df, code, strategy_name):
     rows_cnt = 2 if strategy_name in ["터틀", "TH알고리즘"] else 3
     for i in range(1, rows_cnt + 1): fig.update_yaxes(side="right", showticklabels=True, row=i, col=1)
     return fig
+
+# [ui_components.py] draw_fear_greed_chart 함수 전체 교체
+
+def draw_fear_greed_chart(sentiments, time_info=None):
+    """
+    공포/탐욕 지수 1개월(20일) 흐름 차트 (한국/미국)
+    sentiments: {'KR': df, 'US': df}
+    time_info: {'KR': '02-04 10:00', 'US': '02-03 20:00'}
+    """
+    if not sentiments: return None
+    
+    t_kr = time_info.get('KR', '') if time_info else ''
+    t_us = time_info.get('US', '') if time_info else ''
+    
+    # [수정] 시계 폰트 키우고(14px) 형광 녹색(#39ff14) 적용
+    style_clock = "font-size:14px; color:#39ff14; font-weight:bold;"
+    titles = (
+        f"🇰🇷 KOSPI <br><span style='{style_clock}'>{t_kr}</span>", 
+        f"🇺🇸 US <br><span style='{style_clock}'>{t_us}</span>"
+    )
+
+    fig = make_subplots(
+        rows=1, cols=2, 
+        subplot_titles=titles,
+        horizontal_spacing=0.1
+    )
+
+    # 0~100 범위 설정 및 배경색 구간 정의
+    for col in [1, 2]:
+        fig.add_hrect(y0=0, y1=25, fillcolor="red", opacity=0.1, layer="below", row=1, col=col)
+        fig.add_hrect(y0=25, y1=45, fillcolor="orange", opacity=0.1, layer="below", row=1, col=col)
+        fig.add_hrect(y0=45, y1=55, fillcolor="gray", opacity=0.1, layer="below", row=1, col=col)
+        fig.add_hrect(y0=55, y1=75, fillcolor="skyblue", opacity=0.1, layer="below", row=1, col=col)
+        fig.add_hrect(y0=75, y1=100, fillcolor="green", opacity=0.1, layer="below", row=1, col=col)
+
+    markets = [('KR', 1), ('US', 2)]
+    
+    for mkt, col in markets:
+        df = sentiments.get(mkt)
+        if df is not None and not df.empty:
+            last_val = df['Score'].iloc[-1]
+            
+            x_vals = df['DateStr'].tolist()
+            y_vals = df['Score'].tolist()
+
+            line_color = '#00ff00' if last_val >= 55 else ('#ff4b4b' if last_val <= 45 else '#aaaaaa')
+            
+            # [수정] 20일치 데이터이므로 점 위의 텍스트(숫자)는 제거하여 깔끔하게 함
+            fig.add_trace(go.Scatter(
+                x=x_vals, 
+                y=y_vals, 
+                mode='lines+markers', # +text 제거
+                line=dict(color=line_color, width=3),
+                marker=dict(size=5, color='white', line=dict(width=2, color=line_color)),
+                name=mkt
+            ), row=1, col=col)
+            
+            xref_domain = f"x{col} domain" if col > 1 else "x domain"
+            yref_domain = f"y{col} domain" if col > 1 else "y domain"
+            
+            status_text = "GREED" if last_val > 55 else ("FEAR" if last_val < 45 else "NEUTRAL")
+            val_display = int(round(last_val))
+            
+            # [수정] 상태 레이블을 하단(y=0.08)으로 이동하여 라인을 가리지 않게 함
+            fig.add_annotation(
+                xref=xref_domain, yref=yref_domain,
+                x=0.5, y=0.08, # 바닥 쪽으로 내림
+                text=f"{status_text} ({val_display})",
+                showarrow=False, 
+                font=dict(size=14, color=line_color, weight="bold"),
+                bgcolor="rgba(0,0,0,0.5)", # 글씨 잘 보이게 반투명 배경 추가
+                borderpad=4
+            )
+
+            fig.update_xaxes(type='category', row=1, col=col, tickfont=dict(size=9))
+
+    fig.update_layout(
+        height=180, # [수정] 높이 220 -> 180 (더 컴팩트하게)
+        template="plotly_dark", 
+        showlegend=False, 
+        margin=dict(l=10, r=10, t=50, b=10), # [수정] 상단(t)은 제목 공간 확보, 하단(b) 축소
+        paper_bgcolor="#1e1e1e",
+        plot_bgcolor="#1e1e1e"
+    )
+    fig.update_yaxes(range=[0, 100], showgrid=False, zeroline=False, showticklabels=False)
+    
+    return fig

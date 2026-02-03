@@ -3,17 +3,14 @@ import numpy as np
 from .common import fetch_data, format_price
 from .library import ACTIVE_STRATEGIES
 
-def analyze_single_stock(code, name_raw, market_raw, exclude_penny=False):
+# [수정] exclude_penny 파라미터 삭제
+def analyze_single_stock(code, name_raw, market_raw):
     try:
         df = fetch_data(code)
         if df is None: return None
         curr = df.iloc[-1]
         
-        mkt_upper = str(market_raw).upper()
-        is_us = (code and str(code).isalpha()) or ("US" in mkt_upper) or ("NASDAQ" in mkt_upper)
-        if exclude_penny:
-            if is_us and curr['Close'] < 1: return None 
-            if not is_us and curr['Close'] < 1000: return None
+        # [삭제] 동전주 체크 로직 삭제됨
         
         scored_strategies = []
         
@@ -75,6 +72,7 @@ def calc_win_rate(df, strategy_obj):
         return f"{(wins/total)*100:.0f}% ({wins}/{total})"
     except: return "Err"
 
+# (나머지 deep_dive 함수 등은 수정 없음, 그대로 둠)
 def analyze_strategy_deep_dive(df, capital_krw, usd_rate, strategy_full_name, ticker_code):
     try:
         short_name = strategy_full_name.split(' ')[0] + strategy_full_name.split(' ')[1]
@@ -97,12 +95,11 @@ def analyze_strategy_deep_dive(df, capital_krw, usd_rate, strategy_full_name, ti
         if risk_per_share > 0: shares = int(allowable_risk / risk_per_share)
         if shares * curr_price > applied_capital: shares = int(applied_capital / curr_price)
         
-        # [Fix] 전략에서 리턴한 df가 있으면 그것을 사용 (Chart_Signal 포함됨), 없으면 원본 사용
         final_df = res.get('df', df)
         
         res.update({
             "shares": shares, "total_loss": shares * risk_per_share, "allowable_risk": allowable_risk,
-            "df": final_df.tail(150), # 수정된 df 사용
+            "df": final_df.tail(150),
             "atr": df.iloc[-1].get('ATR', 0), 
             "bandwidth": df.iloc[-1].get('Bandwidth', 0), "disparity": df.iloc[-1].get('Disparity25', 0),
             "is_us": is_us, "price": df.iloc[-1]['Close']
